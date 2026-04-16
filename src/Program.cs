@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Security.Principal;
 using System.Text.RegularExpressions;
 using dnlib.DotNet;
 using dnlib.DotNet.Emit;
@@ -11,8 +12,16 @@ namespace CecilDll;
 
 internal partial class Program
 {
-    private static void Main()
+    private static void Main(string[] args)
     {
+        // 检查管理员权限，不足则提权
+        if (!IsRunningAsAdmin())
+        {
+            Console.WriteLine("需要管理员权限，正在重新启动...");
+            ElevateToAdmin(args);
+            return;
+        }
+
         try
         {
             // 获取应用路径
@@ -21,6 +30,7 @@ internal partial class Program
             // 关闭小米电脑管家进程
             Console.WriteLine("正在关闭小米电脑管家进程...");
             KillProcessByName("XiaomiPCManager");
+            System.Threading.Thread.Sleep(1000);  // 等待一秒确保进程完全释放文件
 
             var rawPath = dllPathPattern.Trim().Trim('\"');
             var dllPath = ResolveLatestVersionPath(rawPath);
@@ -63,14 +73,19 @@ internal partial class Program
                     outputDllPath = $"{Path.GetFileNameWithoutExtension(dllPath)}.dll";
                     break;
                 default:
-                    Console.WriteLine("输入错误,现在已经默认保存到该目录");
+                    Console.WriteLine("输入错误，现在已经默认保存到该目录");
                     break;
             }
 
-            // 保存修改后的DLL
-            module.Write(outputDllPath);
+            // 保存修改后的DLL（使用重试机制应对文件占用）
+            WriteModuleWithRetry(module, outputDllPath, maxRetries: 5);
 
             Console.WriteLine($"修改成功！新DLL已保存至：{outputDllPath}");
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            Console.WriteLine($"操作失败 - 文件被占用：{ex.Message}");
+            Console.WriteLine("请确保小米电脑管家已完全关闭，或尝试手动删除目标DLL后重试");
         }
         catch (Exception ex)
         {
@@ -80,6 +95,52 @@ internal partial class Program
         // 按任意键退出
         Console.WriteLine("按任意键退出...");
         Console.ReadLine();
+    }
+
+    /// <summary>
+    /// 检查当前进程是否以管理员身份运行
+    /// </summary>
+    /// <returns>如果以管理员身份运行返回 true，否则返回 false</returns>
+    private static bool IsRunningAsAdmin()
+    {
+        try
+        {
+            var identity = WindowsIdentity.GetCurrent();
+            var principal = new WindowsPrincipal(identity);
+            return principal.IsInRole(WindowsBuiltInRole.Administrator);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// 以管理员身份重新启动当前应用
+    /// </summary>
+    /// <param name="args">命令行参数</param>
+    private static void ElevateToAdmin(string[] args)
+    {
+        try
+        {
+            var processInfo = new ProcessStartInfo
+            {
+                FileName = Environment.ProcessPath ?? Process.GetCurrentProcess().MainModule?.FileName ?? "",
+                UseShellExecute = true,
+                Verb = "runas",  // 请求提升权限
+                Arguments = args.Length > 0 ? string.Join(" ", args) : ""
+            };
+
+            using (var process = Process.Start(processInfo))
+            {
+                process?.WaitForExit();
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"提权失败：{ex.Message}");
+            Environment.Exit(1);
+        }
     }
 
     // 查找目标类型
@@ -138,7 +199,7 @@ internal partial class Program
         return Path.Combine(latestVersionDir, fileName);
     }
 
-    // 为目标 DLL 生成唯一备份文件，避免覆盖已有备份
+    // 为目标 DLL 生成备份文件（后缀为 .dllbk）
     private static string CreateBackup(string dllPath)
     {
         if (string.IsNullOrWhiteSpace(dllPath))
@@ -148,19 +209,62 @@ internal partial class Program
 
         var directory = Path.GetDirectoryName(dllPath) ?? throw new InvalidOperationException("无法解析 DLL 目录");
         var fileNameWithoutExt = Path.GetFileNameWithoutExtension(dllPath);
-        var extension = Path.GetExtension(dllPath);
-        var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
-
-        var backupPath = Path.Combine(directory, $"{fileNameWithoutExt}.backup_{timestamp}{extension}");
+        
+        // 后缀改为 .dllbk
+        var backupPath = Path.Combine(directory, $"{fileNameWithoutExt}.dllbk");
         var index = 1;
         while (File.Exists(backupPath))
         {
-            backupPath = Path.Combine(directory, $"{fileNameWithoutExt}.backup_{timestamp}_{index}{extension}");
+            backupPath = Path.Combine(directory, $"{fileNameWithoutExt}_{index}.dllbk");
             index++;
         }
 
         File.Copy(dllPath, backupPath, overwrite: false);
         return backupPath;
+    }
+
+    // 关闭应用进程
+
+    /// <summary>
+    /// 以重试机制写入修改后的 DLL，处理文件被占用的情况
+    /// </summary>
+    /// <param name="module">要写入的模块</param>
+    /// <param name="outputPath">输出路径</param>
+    /// <param name="maxRetries">最大重试次数</param>
+    /// <param name="delayMs">每次重试之间的延迟（毫秒）</param>
+    private static void WriteModuleWithRetry(ModuleDef module, string outputPath, int maxRetries = 5, int delayMs = 2000)
+    {
+        Exception? lastException = null;
+
+        for (int i = 0; i < maxRetries; i++)
+        {
+            try
+            {
+                module.Write(outputPath);
+                Console.WriteLine($"DLL 已成功写入：{outputPath}");
+                return;
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                lastException = ex;
+                if (i < maxRetries - 1)
+                {
+                    Console.WriteLine($"文件被占用，等待 {delayMs}ms 后重试（{i + 1}/{maxRetries}）...");
+                    System.Threading.Thread.Sleep(delayMs);
+                }
+            }
+            catch (IOException ex)
+            {
+                lastException = ex;
+                if (i < maxRetries - 1)
+                {
+                    Console.WriteLine($"IO 错误，等待 {delayMs}ms 后重试（{i + 1}/{maxRetries}）...");
+                    System.Threading.Thread.Sleep(delayMs);
+                }
+            }
+        }
+
+        throw lastException ?? new Exception("未知错误：无法写入 DLL");
     }
 
     // 关闭应用进程
