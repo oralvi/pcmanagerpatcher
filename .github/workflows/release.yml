@@ -1,0 +1,63 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  build:
+    runs-on: windows-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '8.0.x'
+    
+    - name: Restore dependencies
+      run: dotnet restore src
+    
+    - name: Build and publish
+      run: dotnet publish src -c Release -r win-x64 --sc -p:PublishSingleFile=true -o artifacts
+    
+    - name: Get version from tag
+      id: get_version
+      run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $env:GITHUB_OUTPUT
+    
+    - name: Rename executable
+      run: |
+        cd artifacts
+        Rename-Item -Path "src.exe" -NewName "PCManagerPatcher.exe" -Force
+        ls -la
+    
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: artifacts/PCManagerPatcher.exe
+        draft: false
+        prerelease: false
+        body: |
+          # PCManagerPatcher ${{ steps.get_version.outputs.VERSION }}
+          
+          ## Download
+          - `PCManagerPatcher.exe` - Self-contained Windows x64 executable (no .NET runtime required)
+          
+          ## Usage
+          ```powershell
+          .\PCManagerPatcher.exe
+          ```
+          
+          ## Changes
+          - See commit history for details
+          
+          ## How to use
+          1. Download `PCManagerPatcher.exe`
+          2. Run it and follow the prompts
+          3. It will automatically locate your Xiaomi PC Manager installation
+          4. Backup is created automatically
+          5. Camera cooperation notifications will be suppressed
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
