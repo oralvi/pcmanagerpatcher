@@ -29,8 +29,11 @@ internal partial class Program
             if (flag != "y" && flag != "Y")
             {
                 Console.WriteLine("请输入dll路径(例如:C:\\Program Files\\MI\\XiaomiPCManager\\*\\PcControlCenter.dll)");
-                dllPath = Console.ReadLine();
+                dllPath = Console.ReadLine() ?? dllPath;
             }
+
+            if (string.IsNullOrWhiteSpace(dllPath))
+                throw new ArgumentException("DLL 路径不能为空");
 
             // 在修改前备份原始 DLL，避免直接覆盖导致无法回退
             var backupPath = CreateBackup(dllPath);
@@ -120,7 +123,7 @@ internal partial class Program
     private static string ResolveLatestVersionPath(string rawPath)
     {
         var adjustedPath = rawPath.Replace("\\*", "\\");
-        var baseDir = Path.GetDirectoryName(adjustedPath);
+        var baseDir = Path.GetDirectoryName(adjustedPath) ?? throw new DirectoryNotFoundException($"无法解析路径目录：{adjustedPath}");
         var fileName = Path.GetFileName(adjustedPath);
 
         var versionDirs = Directory.EnumerateDirectories(baseDir)
