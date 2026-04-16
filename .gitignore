@@ -13,7 +13,7 @@ bld/
 [Oo]bj/
 [Ll]og/
 [Ll]ogs/
-
+*.md1
 ## Visual Studio cache
 .vs/
 .vscode/
