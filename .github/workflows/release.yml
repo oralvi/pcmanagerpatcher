@@ -27,11 +27,9 @@ jobs:
       id: get_version
       run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $env:GITHUB_OUTPUT
     
-    - name: Rename executable
+    - name: Verify executable
       run: |
-        cd artifacts
-        Rename-Item -Path "src.exe" -NewName "PCManagerPatcher.exe" -Force
-        ls -la
+        dir artifacts
     
     - name: Create Release
       uses: softprops/action-gh-release@v1
