@@ -48,6 +48,9 @@ TestResults/
 tmp/
 temp/
 *.log
+Analyze.cs
+DLL_ANALYSIS_*.md
+dotnet-install.ps1
 
 ## Backup files
 *.backup
