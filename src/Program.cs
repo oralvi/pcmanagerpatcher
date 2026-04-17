@@ -244,15 +244,50 @@ internal partial class Program
     {
         var methodBody = method.Body;
         
-        // 清空原始指令，仅保留 Ret，相当于方法直接返回
-        methodBody.Instructions.Clear();
-        methodBody.Instructions.Add(Instruction.Create(OpCodes.Ret));
-        
-        // 简化宏指令并清除堆栈计算缓存
-        methodBody.SimplifyMacros(method.Parameters);
-        methodBody.KeepOldMaxStack = true;
-        
-        Console.WriteLine($"  -> 方法已设置为直接返回，摄像头弹窗将被完全屏蔽");
+        try
+        {
+            // 安全策略：在方法开始处插入 Ret，而不是清空所有指令
+            // 这样可以避免破坏异常处理器和分支指令的引用
+            
+            // 检查是否有异常处理器或复杂的控制流
+            bool hasExceptionHandlers = methodBody.ExceptionHandlers.Count > 0;
+            
+            if (hasExceptionHandlers)
+            {
+                // 对于有异常处理器的方法，保守地只在开始插入 Ret
+                methodBody.Instructions.Insert(0, Instruction.Create(OpCodes.Ret));
+                Console.WriteLine($"  -> 方法在开始处插入返回（保守策略，含异常处理）");
+            }
+            else
+            {
+                // 对于简单方法，直接清空
+                methodBody.Instructions.Clear();
+                methodBody.Instructions.Add(Instruction.Create(OpCodes.Ret));
+                Console.WriteLine($"  -> 方法已设置为直接返回");
+            }
+            
+            // 简化宏指令并更新堆栈高度
+            methodBody.SimplifyMacros(method.Parameters);
+            methodBody.KeepOldMaxStack = true;
+        }
+        catch (Exception ex)
+        {
+            // 如果编辑失败，尝试更激进的方法：创建空方法体
+            try
+            {
+                methodBody.Instructions.Clear();
+                methodBody.ExceptionHandlers.Clear();  // 清除异常处理器
+                methodBody.Instructions.Add(Instruction.Create(OpCodes.Ret));
+                methodBody.SimplifyMacros(method.Parameters);
+                methodBody.KeepOldMaxStack = true;
+                Console.WriteLine($"  -> 方法已清空并返回（清除异常处理器后）");
+            }
+            catch
+            {
+                // 最后手段：跳过此方法
+                Console.WriteLine($"  -> ⚠ 无法屏蔽此方法（控制流过复杂），已跳过");
+            }
+        }
     }
     // 新增路径解析方法
     private static string ResolveLatestVersionPath(string rawPath)
