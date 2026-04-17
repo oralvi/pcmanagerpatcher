@@ -67,13 +67,21 @@ internal partial class Program
 
             var module = ModuleDefMD.Load(dllPath);
             
-            // 精准补丁：针对摄像头协同服务（Synergy）的方法做拦截，避免影响蓝牙耳机等其他弹窗
-            Console.WriteLine("\n=== 应用精准摄像头补丁 ===");
+            // 精准补丁：屏蔽摄像头确认对话框
+            Console.WriteLine("\n=== 应用摄像头补丁 ===");
             var synergyType = FindType(module, "PcControlCenter.Services.UI.MainView.Instances.SynergyUIService");
+            
+            // 屏蔽 Toast 通知
             var showCameraToastMethod = FindMethod(synergyType, "ShowCameraToast");
-            Console.WriteLine($"找到目标方法：{showCameraToastMethod.FullName}");
+            Console.WriteLine($"  [1] 屏蔽 {showCameraToastMethod.FullName}");
             ModifyCameraToastMethod(showCameraToastMethod);
-            Console.WriteLine("摄像头弹窗补丁已应用");
+            
+            // 屏蔽合并确认对话框（这才是关键！）
+            var onShowCombinedPromptMethod = FindMethod(synergyType, "OnShowCombinedPrompt");
+            Console.WriteLine($"  [2] 屏蔽 {onShowCombinedPromptMethod.FullName}");
+            ModifyCameraToastMethod(onShowCombinedPromptMethod);
+            
+            Console.WriteLine("✓ 摄像头相关补丁已全部应用");
 
             Console.WriteLine("\n" + new string('=', 50));
             Console.WriteLine("请选择保存方式");
