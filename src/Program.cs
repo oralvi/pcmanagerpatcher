@@ -16,9 +16,16 @@ internal partial class Program
     {
         try
         {
+            // 检查是否为分析模式
+            if (args.Contains("--analyze") || args.Contains("-a"))
+            {
+                AnalyzeDLL(args);
+                return;
+            }
+
             Console.WriteLine("╔════════════════════════════════════════════════════╗");
             Console.WriteLine("║   小米电脑管家 - 摄像头弹窗屏蔽补丁工具              ║");
-            Console.WriteLine("║   PCManager Patcher v1.0.10                        ║");
+            Console.WriteLine("║   PCManager Patcher v1.0.11                        ║");
             Console.WriteLine("╚════════════════════════════════════════════════════╝\n");
 
             // 步骤 1：查找同目录中的 DLL 文件
@@ -58,52 +65,46 @@ internal partial class Program
 
             var synergyType = FindType(module, "PcControlCenter.Services.UI.MainView.Instances.SynergyUIService");
 
-            // 屏蔽 Toast 通知
-            try
+            // 屏蔽所有摄像头相关方法 (v1.0.11 - 全面屏蔽)
+            var cameraMethodNames = new[]
             {
-                var showCameraToastMethod = FindMethod(synergyType, "ShowCameraToast");
-                Console.WriteLine($"  [1] 屏蔽 ShowCameraToast");
-                ModifyCameraToastMethod(showCameraToastMethod);
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"  ⚠ ShowCameraToast: {ex.Message}");
-            }
+                // UI 通知 (2个)
+                ("ShowCameraToast", "显示摄像头通知"),
+                ("CloseCameraToast", "关闭摄像头通知"),
+                
+                // 合并对话框 (2个)
+                ("MiSmartShareClrWrapper.ICameraCooperationWrapperUI.OnShowCombinedPrompt", "显示合并确认对话框"),
+                ("MiSmartShareClrWrapper.ICameraCooperationWrapperUI.OnCloseCombinedPrompt", "关闭合并确认对话框"),
+                
+                // 摄像头协作回调 (12个)
+                ("MiSmartShareClrWrapper.ICameraCooperationWrapperUI.ExceptionCallback", "异常回调"),
+                ("MiSmartShareClrWrapper.ICameraCooperationWrapperUI.FirstUsedCallback", "首次使用回调"),
+                ("MiSmartShareClrWrapper.ICameraCooperationWrapperUI.OnAddLocalCamera", "添加本地摄像头"),
+                ("MiSmartShareClrWrapper.ICameraCooperationWrapperUI.OnRemoveDistributedCamera", "移除分布式摄像头"),
+                ("MiSmartShareClrWrapper.ICameraCooperationWrapperUI.OnClearDistributedCamera", "清除分布式摄像头"),
+                ("MiSmartShareClrWrapper.ICameraCooperationWrapperUI.OnShowCameraBall", "显示摄像头球"),
+                ("MiSmartShareClrWrapper.ICameraCooperationWrapperUI.OnUpdateCameraBallState", "更新摄像头球状态"),
+                ("MiSmartShareClrWrapper.ICameraCooperationWrapperUI.OnAddDistributedCamera", "添加分布式摄像头"),
+                ("MiSmartShareClrWrapper.ICameraCooperationWrapperUI.OnReSetSelectItem", "重置选项"),
+                ("MiSmartShareClrWrapper.ICameraCooperationWrapperUI.OnOpenCloseCamera", "打开/关闭摄像头"),
+                ("UpdateCameraStatus", "更新摄像头状态"),
+                ("AddCameraDevice", "添加摄像头设备")
+            };
 
-            // 屏蔽关闭 Toast
-            try
+            int count = 1;
+            foreach (var (methodName, description) in cameraMethodNames)
             {
-                var closeCameraToastMethod = FindMethod(synergyType, "CloseCameraToast");
-                Console.WriteLine($"  [2] 屏蔽 CloseCameraToast");
-                ModifyCameraToastMethod(closeCameraToastMethod);
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"  ⚠ CloseCameraToast: {ex.Message}");
-            }
-
-            // 屏蔽合并确认对话框
-            try
-            {
-                var onShowCombinedPromptMethod = FindMethod(synergyType, "MiSmartShareClrWrapper.ICameraCooperationWrapperUI.OnShowCombinedPrompt");
-                Console.WriteLine($"  [3] 屏蔽 OnShowCombinedPrompt");
-                ModifyCameraToastMethod(onShowCombinedPromptMethod);
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"  ⚠ OnShowCombinedPrompt: {ex.Message}");
-            }
-
-            // 屏蔽关闭合并确认对话框
-            try
-            {
-                var onCloseCombinedPromptMethod = FindMethod(synergyType, "MiSmartShareClrWrapper.ICameraCooperationWrapperUI.OnCloseCombinedPrompt");
-                Console.WriteLine($"  [4] 屏蔽 OnCloseCombinedPrompt");
-                ModifyCameraToastMethod(onCloseCombinedPromptMethod);
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"  ⚠ OnCloseCombinedPrompt: {ex.Message}");
+                try
+                {
+                    var method = FindMethod(synergyType, methodName);
+                    Console.WriteLine($"  [{count:D2}] 屏蔽 {description}");
+                    ModifyCameraToastMethod(method);
+                    count++;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"  ⚠ {methodName}: {ex.Message}");
+                }
             }
 
             Console.WriteLine("✓ 补丁应用完成\n");
@@ -492,5 +493,260 @@ internal partial class Program
                 Console.WriteLine($"终止进程失败：{ex.Message},请手动关闭");
             }
         }
+    }
+
+    // ===== 分析模式 =====
+    
+    private static void AnalyzeDLL(string[] args)
+    {
+        Console.WriteLine("╔════════════════════════════════════════════════════╗");
+        Console.WriteLine("║   DLL 分析工具                                     ║");
+        Console.WriteLine("║   PCManager DLL Analyzer                           ║");
+        Console.WriteLine("╚════════════════════════════════════════════════════╝\n");
+
+        string? dllPath = Environment.CurrentDirectory;
+        
+        // 从命令行参数获取 DLL 路径（如果有的话）
+        var pathArg = args.FirstOrDefault(a => a != "--analyze" && a != "-a" && !a.StartsWith("-"));
+        if (!string.IsNullOrEmpty(pathArg) && File.Exists(pathArg))
+        {
+            dllPath = pathArg;
+        }
+        else
+        {
+            // 尝试在当前目录找
+            string localDll = Path.Combine(Environment.CurrentDirectory, "PcControlCenter.dll");
+            if (File.Exists(localDll))
+            {
+                dllPath = localDll;
+            }
+            else
+            {
+                Console.WriteLine("❌ 未找到 DLL 文件");
+                Console.WriteLine("使用方法：");
+                Console.WriteLine("  PCManagerPatcher.exe --analyze [dll-path]");
+                Console.WriteLine("  或将 PcControlCenter.dll 放在程序目录中");
+                return;
+            }
+        }
+
+        try
+        {
+            Console.WriteLine($"📂 分析 DLL：{Path.GetFileName(dllPath)}\n");
+            var fileInfo = new FileInfo(dllPath);
+            Console.WriteLine($"  大小：{fileInfo.Length / 1024} KB");
+            Console.WriteLine($"  修改时间：{fileInfo.LastWriteTime}\n");
+
+            var module = ModuleDefMD.Load(dllPath);
+            Console.WriteLine($"✓ Assembly：{module.Name}");
+            Console.WriteLine($"  版本：{module.Assembly?.Version}\n");
+
+            // 分析 SynergyUIService
+            AnalyzeSynergyUIService(module);
+
+            // 分析 ICameraCooperationWrapperUI
+            AnalyzeICameraCooperationWrapperUI(module);
+
+            // 分析所有摄像头相关类型
+            AnalyzeCameraTypes(module);
+
+            // 分析配置和存储相关的线索
+            if (args.Contains("--deep"))
+            {
+                AnalyzeConfigurationHints(module);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"❌ 分析失败：{ex.Message}");
+        }
+    }
+
+    private static void AnalyzeSynergyUIService(ModuleDefMD module)
+    {
+        var synergyType = module.GetTypes().FirstOrDefault(t => t.Name == "SynergyUIService");
+        if (synergyType == null)
+        {
+            Console.WriteLine("❌ 未找到 SynergyUIService");
+            return;
+        }
+
+        Console.WriteLine("═══════════════════════════════════════════════════");
+        Console.WriteLine("🔍 SynergyUIService");
+        Console.WriteLine("═══════════════════════════════════════════════════");
+        Console.WriteLine($"  Namespace: {synergyType.Namespace}");
+        Console.WriteLine($"  Full Name: {synergyType.FullName}");
+        Console.WriteLine($"  Total Methods: {synergyType.Methods.Count}\n");
+
+        Console.WriteLine("  摄像头相关方法：");
+        var cameraMethods = synergyType.Methods.Where(m =>
+            m.Name.Contains("Camera") || m.Name.Contains("Toast") ||
+            m.Name.Contains("Prompt") || m.Name.Contains("Show") ||
+            m.Name.Contains("Close"));
+
+        if (!cameraMethods.Any())
+        {
+            Console.WriteLine("    (无)");
+        }
+        else
+        {
+            foreach (var method in cameraMethods)
+            {
+                var hasBody = method.Body?.Instructions.Count > 0;
+                Console.WriteLine($"    • {method.Name} {(hasBody ? "" : "[ABSTRACT]")}");
+            }
+        }
+
+        Console.WriteLine("\n  所有方法列表：");
+        foreach (var method in synergyType.Methods.OrderBy(m => m.Name))
+        {
+            var mark = method.Name.Contains("Camera") || method.Name.Contains("Toast") ||
+                      method.Name.Contains("Prompt") ? "🎯 " : "   ";
+            Console.WriteLine($"    {mark}{method.Name}");
+        }
+        Console.WriteLine();
+    }
+
+    private static void AnalyzeICameraCooperationWrapperUI(ModuleDefMD module)
+    {
+        var iface = module.GetTypes().FirstOrDefault(t => t.Name == "ICameraCooperationWrapperUI");
+        if (iface == null)
+        {
+            Console.WriteLine("❌ 未找到 ICameraCooperationWrapperUI");
+            return;
+        }
+
+        Console.WriteLine("═══════════════════════════════════════════════════");
+        Console.WriteLine("🔍 ICameraCooperationWrapperUI (Interface)");
+        Console.WriteLine("═══════════════════════════════════════════════════");
+        Console.WriteLine($"  Namespace: {iface.Namespace}");
+        Console.WriteLine($"  Methods:\n");
+
+        foreach (var method in iface.Methods)
+        {
+            Console.WriteLine($"    • {method.Name}");
+        }
+        Console.WriteLine();
+
+        // 查找实现这个接口的类型
+        var implementingTypes = module.GetTypes().Where(t =>
+            t.Interfaces.Any(i => i.Interface.Name == "ICameraCooperationWrapperUI"));
+
+        if (implementingTypes.Any())
+        {
+            Console.WriteLine("  实现此接口的类型：");
+            foreach (var type in implementingTypes)
+            {
+                Console.WriteLine($"    • {type.Name}");
+            }
+            Console.WriteLine();
+        }
+    }
+
+    private static void AnalyzeCameraTypes(ModuleDefMD module)
+    {
+        Console.WriteLine("═══════════════════════════════════════════════════");
+        Console.WriteLine("🔍 所有包含 'Camera' 的类型");
+        Console.WriteLine("═══════════════════════════════════════════════════");
+
+        var cameraTypes = module.GetTypes().Where(t => t.Name.Contains("Camera")).ToList();
+        if (!cameraTypes.Any())
+        {
+            Console.WriteLine("  (无)\n");
+            return;
+        }
+
+        foreach (var type in cameraTypes.OrderBy(t => t.Name))
+        {
+            Console.WriteLine($"  • {type.Name} ({type.BaseType?.Name ?? "object"})");
+            if (type.Methods.Any(m => m.Name.Contains("Camera") || m.Name.Contains("Show")))
+            {
+                foreach (var method in type.Methods.Where(m => m.Name.Contains("Camera") || m.Name.Contains("Show")))
+                {
+                    Console.WriteLine($"      - {method.Name}");
+                }
+            }
+        }
+        Console.WriteLine();
+    }
+
+    private static void AnalyzeConfigurationHints(ModuleDefMD module)
+    {
+        Console.WriteLine("═══════════════════════════════════════════════════");
+        Console.WriteLine("🔍 配置存储线索分析 (--deep)");
+        Console.WriteLine("═══════════════════════════════════════════════════");
+
+        var synergyType = module.GetTypes().FirstOrDefault(t => t.Name == "SynergyUIService");
+        if (synergyType == null) return;
+
+        // 查找所有字段（可能存储配置）
+        Console.WriteLine("\n📦 SynergyUIService 字段（可能的配置和状态）：");
+        foreach (var field in synergyType.Fields.OrderBy(f => f.Name))
+        {
+            var fieldType = field.FieldType.ToString();
+            Console.WriteLine($"  • {field.Name} : {fieldType}");
+        }
+
+        // 查找所有属性
+        Console.WriteLine("\n🔧 SynergyUIService 属性：");
+        foreach (var property in synergyType.Properties.OrderBy(p => p.Name))
+        {
+            Console.WriteLine($"  • {property.Name}");
+        }
+
+        // 查找所有返回特定类型的方法
+        Console.WriteLine("\n🎯 与状态/配置检查相关的方法签名：");
+        foreach (var method in synergyType.Methods.Where(m => 
+            m.ReturnType.ToString().Contains("Bool") || 
+            m.Name.Contains("Get") || m.Name.Contains("Check") || 
+            m.Name.Contains("Update") || m.Name.Contains("Load") || 
+            m.Name.Contains("Save") || m.Name.Contains("Config")))
+        {
+            var returnType = method.ReturnType.ToString();
+            Console.WriteLine($"  • {method.Name}() -> {returnType}");
+        }
+
+        Console.WriteLine("\n💡 查找字符串常量中的配置关键词：");
+        var stringConstants = new List<string>();
+        foreach (var method in synergyType.Methods.Where(m => m.Body != null))
+        {
+            foreach (var instr in method.Body.Instructions)
+            {
+                if (instr.OpCode == OpCodes.Ldstr)
+                {
+                    var ldstrValue = instr.Operand as string;
+                    if (ldstrValue != null && 
+                        (ldstrValue.Contains("camera", StringComparison.OrdinalIgnoreCase) ||
+                         ldstrValue.Contains("device", StringComparison.OrdinalIgnoreCase) ||
+                         ldstrValue.Contains("config", StringComparison.OrdinalIgnoreCase) ||
+                         ldstrValue.Contains("save", StringComparison.OrdinalIgnoreCase) ||
+                         ldstrValue.Contains("bind", StringComparison.OrdinalIgnoreCase) ||
+                         ldstrValue.Contains("register", StringComparison.OrdinalIgnoreCase) ||
+                         ldstrValue.Contains(".json", StringComparison.OrdinalIgnoreCase) ||
+                         ldstrValue.Contains(".ini", StringComparison.OrdinalIgnoreCase) ||
+                         ldstrValue.Contains(".db", StringComparison.OrdinalIgnoreCase)))
+                    {
+                        stringConstants.Add(ldstrValue);
+                    }
+                }
+            }
+        }
+
+        if (stringConstants.Count > 0)
+        {
+            Console.WriteLine("  关键字符串常量：");
+            foreach (var str in stringConstants.Distinct())
+            {
+                if (!string.IsNullOrWhiteSpace(str) && str.Length < 200)
+                {
+                    Console.WriteLine($"    • {str}");
+                }
+            }
+        }
+        else
+        {
+            Console.WriteLine("  (未找到关键字符串)");
+        }
+        Console.WriteLine();
     }
 }
