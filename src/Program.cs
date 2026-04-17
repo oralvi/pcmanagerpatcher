@@ -35,6 +35,18 @@ internal partial class Program
 
             var rawPath = dllPathPattern.Trim().Trim('\"');
             var dllPath = ResolveLatestVersionPath(rawPath);
+            
+            // 等待后再看看还有没有进程持有文件锁
+            Console.WriteLine("检查文件锁定状态...");
+            var lockedBy = FindFileLocks(dllPath);
+            if (lockedBy != null && lockedBy.Count > 0)
+            {
+                Console.WriteLine($"⚠ 警告：文件仍被以下进程持有:");
+                foreach (var proc in lockedBy)
+                    Console.WriteLine($"  - {proc}");
+                Console.WriteLine("建议：手动关闭这些进程，或稍后重试");
+            }
+            
             Console.WriteLine($"\n=== DLL 路径确认 ===");
             Console.WriteLine($"找到的 DLL 路径：");
             Console.WriteLine($"  {dllPath}");
@@ -270,19 +282,18 @@ internal partial class Program
 
     /// <summary>
     /// 以重试机制写入修改后的 DLL，处理文件被占用的情况
+    /// 使用"删除后重建"策略而不是直接覆盖，以打破内存映射连接
     /// </summary>
-    /// <param name="module">要写入的模块</param>
-    /// <param name="outputPath">输出路径</param>
-    /// <param name="maxRetries">最大重试次数</param>
-    /// <param name="delayMs">每次重试之间的延迟（毫秒）</param>
     private static void WriteModuleWithRetry(ModuleDef module, string outputPath, int maxRetries = 5, int delayMs = 2000)
     {
         // 记录原始文件的修改时间
         DateTime originalModifyTime = DateTime.MinValue;
+        bool isDirectReplace = false;
         if (File.Exists(outputPath))
         {
             var fileInfo = new FileInfo(outputPath);
             originalModifyTime = fileInfo.LastWriteTime;
+            isDirectReplace = true;
             Console.WriteLine($"原文件修改时间：{originalModifyTime:yyyy-MM-dd HH:mm:ss}");
         }
 
@@ -293,29 +304,62 @@ internal partial class Program
             try
             {
                 Console.WriteLine($"尝试写入 DLL（第 {i + 1}/{maxRetries} 次）...");
-                module.Write(outputPath);
-
-                // 验证文件是否真的被修改
-                if (File.Exists(outputPath))
+                
+                if (isDirectReplace)
                 {
-                    var fileInfo = new FileInfo(outputPath);
-                    DateTime newModifyTime = fileInfo.LastWriteTime;
-                    
-                    // 检查修改时间是否改变
-                    if (newModifyTime > originalModifyTime || !File.Exists(outputPath.Replace(".dll", "_bak.dll")))
+                    // 对于直接替换，使用临时文件写入，然后替换原文件
+                    string tempPath = outputPath + ".tmp";
+                    try
                     {
-                        Console.WriteLine($"✓ DLL 已成功写入，新的修改时间：{newModifyTime:yyyy-MM-dd HH:mm:ss}");
-                        return;
+                        // 先写入临时文件
+                        module.Write(tempPath);
+                        Console.WriteLine($"✓ 已写入临时文件：{tempPath}");
+                        
+                        // 删除原文件（打破内存映射）
+                        if (File.Exists(outputPath))
+                        {
+                            File.Delete(outputPath);
+                            Console.WriteLine($"✓ 已删除原文件");
+                            System.Threading.Thread.Sleep(500);  // 短暂延迟确保删除完成
+                        }
+                        
+                        // 重命名临时文件为目标文件
+                        File.Move(tempPath, outputPath, overwrite: true);
+                        Console.WriteLine($"✓ 已替换为新 DLL");
+                        
+                        // 验证文件是否真的被修改
+                        if (File.Exists(outputPath))
+                        {
+                            var fileInfo = new FileInfo(outputPath);
+                            DateTime newModifyTime = fileInfo.LastWriteTime;
+                            
+                            if (newModifyTime > originalModifyTime)
+                            {
+                                Console.WriteLine($"✓ DLL 已成功写入，新的修改时间：{newModifyTime:yyyy-MM-dd HH:mm:ss}");
+                                return;
+                            }
+                            else
+                            {
+                                throw new IOException("DLL 文件写入失败：修改时间未更新");
+                            }
+                        }
+                        else
+                        {
+                            throw new FileNotFoundException($"写入后文件不存在：{outputPath}");
+                        }
                     }
-                    else
+                    finally
                     {
-                        Console.WriteLine($"⚠ 警告：文件修改时间未变化，写入可能失败");
-                        throw new IOException("DLL 文件写入失败：修改时间未更新");
+                        // 清理临时文件
+                        try { if (File.Exists(tempPath)) File.Delete(tempPath); } catch { }
                     }
                 }
                 else
                 {
-                    throw new FileNotFoundException($"写入后文件不存在：{outputPath}");
+                    // 生成新文件，直接写入
+                    module.Write(outputPath);
+                    Console.WriteLine($"✓ DLL 已成功写入：{outputPath}");
+                    return;
                 }
             }
             catch (UnauthorizedAccessException ex)
@@ -360,6 +404,47 @@ internal partial class Program
         }
 
         throw lastException ?? new Exception("未知错误：无法写入 DLL");
+    }
+
+    // 检查文件锁定状态
+
+    /// <summary>
+    /// 检查哪些进程可能持有文件锁（基于尝试打开文件）
+    /// </summary>
+    private static List<string>? FindFileLocks(string filePath)
+    {
+        try
+        {
+            // 尝试以独占方式打开文件，测试文件是否被锁定
+            using (var stream = File.Open(filePath, FileMode.Open, FileAccess.Read, FileShare.None))
+            {
+                // 如果能打开，说明没有被锁定
+                stream.Close();
+                return null;  // 文件未被锁定
+            }
+        }
+        catch (IOException)
+        {
+            // 文件被锁定，但 .NET 不能直接列举进程
+            // 可以尝试通过系统调用，但这里只是返回提示
+            try
+            {
+                // 尝试用更低的权限再检查一次
+                using (var stream = File.Open(filePath, FileMode.Open, FileAccess.Read, FileShare.Read))
+                {
+                    stream.Close();
+                }
+                return new List<string> { "文件被内存映射（system mapped）或防病毒软件扫描中" };
+            }
+            catch
+            {
+                return new List<string> { "文件被进程独占锁定（可能是 System、Services 或其他系统组件）" };
+            }
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     // 关闭应用进程
