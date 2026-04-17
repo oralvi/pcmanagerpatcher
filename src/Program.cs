@@ -30,15 +30,19 @@ internal partial class Program
             // 关闭小米电脑管家进程
             Console.WriteLine("正在关闭小米电脑管家进程...");
             KillProcessByName("XiaomiPCManager");
-            System.Threading.Thread.Sleep(1000);  // 等待一秒确保进程完全释放文件
+            Console.WriteLine("等待进程完全释放文件（3 秒）...");
+            System.Threading.Thread.Sleep(3000);  // 等待更长时间确保文件被释放
 
             var rawPath = dllPathPattern.Trim().Trim('\"');
             var dllPath = ResolveLatestVersionPath(rawPath);
-            Console.WriteLine($"找到最新版本路径：{dllPath},请确认该路径是否正确(Y/N)");
+            Console.WriteLine($"\n=== DLL 路径确认 ===");
+            Console.WriteLine($"找到的 DLL 路径：");
+            Console.WriteLine($"  {dllPath}");
+            Console.WriteLine($"\n是否继续？(Y/N，默认 Y)");
             var flag = Console.ReadLine();
-            if (flag != "y" && flag != "Y")
+            if (flag?.ToLower() == "n")
             {
-                Console.WriteLine("请输入dll路径(例如:C:\\Program Files\\MI\\XiaomiPCManager\\*\\PcControlCenter.dll)");
+                Console.WriteLine("请输入自定义 DLL 路径：");
                 dllPath = Console.ReadLine() ?? dllPath;
             }
 
@@ -47,7 +51,7 @@ internal partial class Program
 
             // 在修改前备份原始 DLL，避免直接覆盖导致无法回退
             var backupPath = CreateBackup(dllPath);
-            Console.WriteLine($"已完成备份：{backupPath}");
+            Console.WriteLine($"✓ 已完成备份：{backupPath}");
 
             var module = ModuleDefMD.Load(dllPath);
             
@@ -59,37 +63,76 @@ internal partial class Program
             ModifyCameraToastMethod(showCameraToastMethod);
             Console.WriteLine("摄像头弹窗补丁已应用");
 
-            Console.WriteLine("\n请选择是直接替换还是生成到该目录");
-            Console.WriteLine("1.直接替换");
-            Console.WriteLine("2.生成到该目录");
+            Console.WriteLine("\n" + new string('=', 50));
+            Console.WriteLine("请选择保存方式");
+            Console.WriteLine(new string('=', 50));
+            Console.WriteLine($"1. 直接替换原文件 ({dllPath})");
+            Console.WriteLine($"2. 生成新文件到当前目录 (PcControlCenter.dll)");
+            Console.WriteLine("请输入选择（1 或 2）：");
+            
             var input = Console.ReadLine();
             string outputDllPath = $"{Path.GetFileNameWithoutExtension(dllPath)}.dll";
+            
             switch (input)
             {
                 case "1":
                     outputDllPath = dllPath;
+                    Console.WriteLine($"\n⚠ 警告：您选择了直接替换原文件");
+                    Console.WriteLine($"  备份已保存至：{backupPath}");
+                    Console.WriteLine($"  如有问题可从备份恢复");
+                    Console.WriteLine($"\n确认替换？(Y/N)：");
+                    var confirm = Console.ReadLine();
+                    if (confirm?.ToLower() != "y")
+                    {
+                        Console.WriteLine("已取消直接替换，改为生成新文件");
+                        outputDllPath = $"{Path.GetFileNameWithoutExtension(dllPath)}.dll";
+                    }
+                    else
+                    {
+                        Console.WriteLine($"✓ 已确认：将直接替换原文件");
+                    }
                     break;
                 case "2":
                     outputDllPath = $"{Path.GetFileNameWithoutExtension(dllPath)}.dll";
+                    Console.WriteLine($"✓ 已选择：生成新文件");
+                    Console.WriteLine($"  输出路径：{Path.Combine(Directory.GetCurrentDirectory(), outputDllPath)}");
                     break;
                 default:
-                    Console.WriteLine("输入错误，现在已经默认保存到该目录");
+                    Console.WriteLine("输入无效，已默认选择：生成新文件到当前目录");
+                    outputDllPath = $"{Path.GetFileNameWithoutExtension(dllPath)}.dll";
                     break;
             }
 
             // 保存修改后的DLL（使用重试机制应对文件占用）
+            Console.WriteLine($"\n开始写入 DLL 到：{outputDllPath}");
             WriteModuleWithRetry(module, outputDllPath, maxRetries: 5);
 
-            Console.WriteLine($"修改成功！新DLL已保存至：{outputDllPath}");
+            // 验证文件是否真的被修改
+            if (File.Exists(outputDllPath))
+            {
+                var fileInfo = new FileInfo(outputDllPath);
+                var modifyTime = fileInfo.LastWriteTime;
+                Console.WriteLine($"✓ 文件已确认存在，修改时间：{modifyTime:yyyy-MM-dd HH:mm:ss}");
+                Console.WriteLine($"✓ 文件大小：{fileInfo.Length / 1024} KB");
+                Console.WriteLine($"\n修改成功！新DLL已保存至：{outputDllPath}");
+            }
+            else
+            {
+                throw new FileNotFoundException($"写入后文件不存在：{outputDllPath}");
+            }
         }
         catch (UnauthorizedAccessException ex)
         {
-            Console.WriteLine($"操作失败 - 文件被占用：{ex.Message}");
-            Console.WriteLine("请确保小米电脑管家已完全关闭，或尝试手动删除目标DLL后重试");
+            Console.WriteLine($"❌ 操作失败 - 文件被占用：{ex.Message}");
+            Console.WriteLine("可能的解决方案：");
+            Console.WriteLine("  1. 确保小米电脑管家已完全关闭（检查任务管理器）");
+            Console.WriteLine("  2. 重启计算机，使用\"直接替换\"选项");
+            Console.WriteLine("  3. 禁用杀毒软件并重试");
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"操作失败：{ex.Message}");
+            Console.WriteLine($"❌ 操作失败：{ex.Message}");
+            Console.WriteLine($"异常类型：{ex.GetType().Name}");
         }
 
         // 按任意键退出
@@ -234,23 +277,58 @@ internal partial class Program
     /// <param name="delayMs">每次重试之间的延迟（毫秒）</param>
     private static void WriteModuleWithRetry(ModuleDef module, string outputPath, int maxRetries = 5, int delayMs = 2000)
     {
+        // 记录原始文件的修改时间
+        DateTime originalModifyTime = DateTime.MinValue;
+        if (File.Exists(outputPath))
+        {
+            var fileInfo = new FileInfo(outputPath);
+            originalModifyTime = fileInfo.LastWriteTime;
+            Console.WriteLine($"原文件修改时间：{originalModifyTime:yyyy-MM-dd HH:mm:ss}");
+        }
+
         Exception? lastException = null;
 
         for (int i = 0; i < maxRetries; i++)
         {
             try
             {
+                Console.WriteLine($"尝试写入 DLL（第 {i + 1}/{maxRetries} 次）...");
                 module.Write(outputPath);
-                Console.WriteLine($"DLL 已成功写入：{outputPath}");
-                return;
+
+                // 验证文件是否真的被修改
+                if (File.Exists(outputPath))
+                {
+                    var fileInfo = new FileInfo(outputPath);
+                    DateTime newModifyTime = fileInfo.LastWriteTime;
+                    
+                    // 检查修改时间是否改变
+                    if (newModifyTime > originalModifyTime || !File.Exists(outputPath.Replace(".dll", "_bak.dll")))
+                    {
+                        Console.WriteLine($"✓ DLL 已成功写入，新的修改时间：{newModifyTime:yyyy-MM-dd HH:mm:ss}");
+                        return;
+                    }
+                    else
+                    {
+                        Console.WriteLine($"⚠ 警告：文件修改时间未变化，写入可能失败");
+                        throw new IOException("DLL 文件写入失败：修改时间未更新");
+                    }
+                }
+                else
+                {
+                    throw new FileNotFoundException($"写入后文件不存在：{outputPath}");
+                }
             }
             catch (UnauthorizedAccessException ex)
             {
                 lastException = ex;
                 if (i < maxRetries - 1)
                 {
-                    Console.WriteLine($"文件被占用，等待 {delayMs}ms 后重试（{i + 1}/{maxRetries}）...");
+                    Console.WriteLine($"⚠ 文件被占用（{ex.Message}），等待 {delayMs}ms 后重试（{i + 1}/{maxRetries}）...");
                     System.Threading.Thread.Sleep(delayMs);
+                }
+                else
+                {
+                    Console.WriteLine($"✗ 所有尝试均失败，文件始终被占用");
                 }
             }
             catch (IOException ex)
@@ -258,8 +336,25 @@ internal partial class Program
                 lastException = ex;
                 if (i < maxRetries - 1)
                 {
-                    Console.WriteLine($"IO 错误，等待 {delayMs}ms 后重试（{i + 1}/{maxRetries}）...");
+                    Console.WriteLine($"⚠ IO 错误（{ex.Message}），等待 {delayMs}ms 后重试（{i + 1}/{maxRetries}）...");
                     System.Threading.Thread.Sleep(delayMs);
+                }
+                else
+                {
+                    Console.WriteLine($"✗ 所有尝试均失败，IO 错误：{ex.Message}");
+                }
+            }
+            catch (Exception ex)
+            {
+                lastException = ex;
+                if (i < maxRetries - 1)
+                {
+                    Console.WriteLine($"⚠ 写入失败（{ex.GetType().Name}: {ex.Message}），等待后重试...");
+                    System.Threading.Thread.Sleep(delayMs);
+                }
+                else
+                {
+                    Console.WriteLine($"✗ 所有尝试均失败，错误：{ex.Message}");
                 }
             }
         }
