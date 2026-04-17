@@ -14,183 +14,145 @@ internal partial class Program
 {
     private static void Main(string[] args)
     {
-        // 检查管理员权限，不足则提权
-        if (!IsRunningAsAdmin())
-        {
-            Console.WriteLine("需要管理员权限，正在重新启动...");
-            ElevateToAdmin(args);
-            return;
-        }
-
         try
         {
-            // 获取应用路径
-            string dllPathPattern = @"C:\Program Files\MI\XiaomiPCManager\*\PcControlCenter.dll";
+            Console.WriteLine("╔════════════════════════════════════════════════════╗");
+            Console.WriteLine("║   小米电脑管家 - 摄像头弹窗屏蔽补丁工具              ║");
+            Console.WriteLine("║   PCManager Patcher v1.0.10                        ║");
+            Console.WriteLine("╚════════════════════════════════════════════════════╝\n");
 
-            // 关闭小米电脑管家进程
-            Console.WriteLine("正在关闭小米电脑管家进程...");
-            KillProcessByName("XiaomiPCManager");
-            Console.WriteLine("等待进程完全释放文件（3 秒）...");
-            System.Threading.Thread.Sleep(3000);  // 等待更长时间确保文件被释放
+            // 步骤 1：查找同目录中的 DLL 文件
+            string currentDir = Environment.CurrentDirectory;
+            string dllPath = Path.Combine(currentDir, "PcControlCenter.dll");
 
-            var rawPath = dllPathPattern.Trim().Trim('\"');
-            var dllPath = ResolveLatestVersionPath(rawPath);
-            
-            // 等待后再看看还有没有进程持有文件锁
-            Console.WriteLine("检查文件锁定状态...");
-            var lockedBy = FindFileLocks(dllPath);
-            if (lockedBy != null && lockedBy.Count > 0)
+            if (!File.Exists(dllPath))
             {
-                Console.WriteLine($"⚠ 警告：文件仍被以下进程持有:");
-                foreach (var proc in lockedBy)
-                    Console.WriteLine($"  - {proc}");
-                Console.WriteLine("建议：手动关闭这些进程，或稍后重试");
-            }
-            
-            Console.WriteLine($"\n=== DLL 路径确认 ===");
-            Console.WriteLine($"找到的 DLL 路径：");
-            Console.WriteLine($"  {dllPath}");
-            Console.WriteLine($"\n是否继续？(Y/N，默认 Y)");
-            var flag = Console.ReadLine();
-            if (flag?.ToLower() == "n")
-            {
-                Console.WriteLine("请输入自定义 DLL 路径：");
-                dllPath = Console.ReadLine() ?? dllPath;
+                Console.WriteLine("❌ 错误：同目录未找到 PcControlCenter.dll");
+                Console.WriteLine($"   当前目录：{currentDir}");
+                Console.WriteLine("\n📋 使用步骤：");
+                Console.WriteLine("  1. 从小米电脑管家安装目录复制 PcControlCenter.dll 到本程序所在目录");
+                Console.WriteLine("  2. 重新运行本程序");
+                Console.WriteLine("  3. 程序会生成修改后的 DLL 和备份");
+                Console.WriteLine("  4. 手动将修改后的 DLL 替换到原安装位置\n");
+                throw new FileNotFoundException($"找不到 DLL 文件：{dllPath}");
             }
 
-            if (string.IsNullOrWhiteSpace(dllPath))
-                throw new ArgumentException("DLL 路径不能为空");
+            Console.WriteLine($"✓ 找到 DLL：{dllPath}\n");
 
-            // 在修改前备份原始 DLL，避免直接覆盖导致无法回退
-            var backupPath = CreateBackup(dllPath);
-            Console.WriteLine($"✓ 已完成备份：{backupPath}");
+            // 步骤 2：备份原始 DLL
+            Console.WriteLine("=== 步骤 1：备份原始 DLL ===");
+            string backupPath = Path.Combine(currentDir, "PcControlCenter.dll.bak");
+            int backupIndex = 1;
+            while (File.Exists(backupPath))
+            {
+                backupPath = Path.Combine(currentDir, $"PcControlCenter_bak_{backupIndex}.dll");
+                backupIndex++;
+            }
 
+            File.Copy(dllPath, backupPath, overwrite: false);
+            Console.WriteLine($"✓ 原始 DLL 已备份：{Path.GetFileName(backupPath)}\n");
+
+            // 步骤 3：加载并修改 DLL
+            Console.WriteLine("=== 步骤 2：应用摄像头补丁 ===");
             var module = ModuleDefMD.Load(dllPath);
-            
-            // 精准补丁：屏蔽摄像头确认对话框
-            Console.WriteLine("\n=== 应用摄像头补丁 ===");
+
             var synergyType = FindType(module, "PcControlCenter.Services.UI.MainView.Instances.SynergyUIService");
-            
+
             // 屏蔽 Toast 通知
-            var showCameraToastMethod = FindMethod(synergyType, "ShowCameraToast");
-            Console.WriteLine($"  [1] 屏蔽 {showCameraToastMethod.FullName}");
-            ModifyCameraToastMethod(showCameraToastMethod);
-            
-            // 屏蔽合并确认对话框（这才是关键！）
-            var onShowCombinedPromptMethod = FindMethod(synergyType, "OnShowCombinedPrompt");
-            Console.WriteLine($"  [2] 屏蔽 {onShowCombinedPromptMethod.FullName}");
-            ModifyCameraToastMethod(onShowCombinedPromptMethod);
-            
-            Console.WriteLine("✓ 摄像头相关补丁已全部应用");
-
-            Console.WriteLine("\n" + new string('=', 50));
-            Console.WriteLine("请选择保存方式");
-            Console.WriteLine(new string('=', 50));
-            Console.WriteLine($"1. 直接替换原文件 ({dllPath})");
-            Console.WriteLine($"2. 生成新文件到当前目录 (PcControlCenter.dll)");
-            Console.WriteLine("请输入选择（1 或 2）：");
-            
-            var input = Console.ReadLine();
-            string outputDllPath = $"{Path.GetFileNameWithoutExtension(dllPath)}.dll";
-            
-            switch (input)
-            {
-                case "1":
-                    outputDllPath = dllPath;
-                    Console.WriteLine($"\n⚠ 警告：您选择了直接替换原文件");
-                    Console.WriteLine($"  备份已保存至：{backupPath}");
-                    Console.WriteLine($"  如有问题可从备份恢复");
-                    Console.WriteLine($"\n确认替换？(Y/N)：");
-                    var confirm = Console.ReadLine();
-                    if (confirm?.ToLower() != "y")
-                    {
-                        Console.WriteLine("已取消直接替换，改为生成新文件");
-                        outputDllPath = $"{Path.GetFileNameWithoutExtension(dllPath)}.dll";
-                    }
-                    else
-                    {
-                        Console.WriteLine($"✓ 已确认：将直接替换原文件");
-                    }
-                    break;
-                case "2":
-                    outputDllPath = $"{Path.GetFileNameWithoutExtension(dllPath)}.dll";
-                    Console.WriteLine($"✓ 已选择：生成新文件");
-                    Console.WriteLine($"  输出路径：{Path.Combine(Directory.GetCurrentDirectory(), outputDllPath)}");
-                    break;
-                default:
-                    Console.WriteLine("输入无效，已默认选择：生成新文件到当前目录");
-                    outputDllPath = $"{Path.GetFileNameWithoutExtension(dllPath)}.dll";
-                    break;
-            }
-
-            // 保存修改后的DLL（使用重试机制应对文件占用）
-            Console.WriteLine($"\n开始写入 DLL 到：{outputDllPath}");
             try
             {
-                WriteModuleWithRetry(module, outputDllPath, maxRetries: 5);
+                var showCameraToastMethod = FindMethod(synergyType, "ShowCameraToast");
+                Console.WriteLine($"  [1] 屏蔽 ShowCameraToast");
+                ModifyCameraToastMethod(showCameraToastMethod);
             }
-            catch (IOException ex) when (ex.Message.Contains("用户映射") || ex.Message.Contains("memory-mapped"))
+            catch (Exception ex)
             {
-                // 如果是内存映射的错误，提示用户重启
-                Console.WriteLine($"\n❌ 写入失败 - 文件被系统内存映射");
-                Console.WriteLine("这通常表示：");
-                Console.WriteLine("  • Windows 内核或驱动程序持有文件");
-                Console.WriteLine("  • 虚拟内存映射");
-                Console.WriteLine("\n💡 解决方案：");
-                Console.WriteLine("  1. 关闭本程序");
-                Console.WriteLine("  2. 重启电脑");
-                Console.WriteLine("  3. 重启后立即运行本程序（在任务管理器加载之前）");
-                Console.WriteLine("\n或者使用备用方式：");
-                Console.WriteLine($"  • 把补丁 DLL 保存到其他目录");
-                Console.WriteLine($"  • 手动用备份文件替换");
-                
-                // 尝试备用：保存到当前目录
-                string altPath = $"PcControlCenter_PATCHED_{DateTime.Now:yyyyMMdd_HHmmss}.dll";
-                try
-                {
-                    Console.WriteLine($"\n尝试保存到备用位置：{altPath}");
-                    WriteModuleWithRetry(module, altPath, maxRetries: 3);
-                    Console.WriteLine($"✓ 补丁 DLL 已保存到：{Environment.CurrentDirectory}\\{altPath}");
-                    Console.WriteLine($"  您可以手动将此文件复制到：{dllPath}");
-                }
-                catch
-                {
-                    Console.WriteLine($"✗ 备用保存也失败了，请重启后重试");
-                }
-                throw;
+                Console.WriteLine($"  ⚠ ShowCameraToast: {ex.Message}");
             }
 
-            // 验证文件是否真的被修改
-            if (File.Exists(outputDllPath))
+            // 屏蔽关闭 Toast
+            try
             {
-                var fileInfo = new FileInfo(outputDllPath);
-                var modifyTime = fileInfo.LastWriteTime;
-                Console.WriteLine($"✓ 文件已确认存在，修改时间：{modifyTime:yyyy-MM-dd HH:mm:ss}");
-                Console.WriteLine($"✓ 文件大小：{fileInfo.Length / 1024} KB");
-                Console.WriteLine($"\n修改成功！新DLL已保存至：{outputDllPath}");
+                var closeCameraToastMethod = FindMethod(synergyType, "CloseCameraToast");
+                Console.WriteLine($"  [2] 屏蔽 CloseCameraToast");
+                ModifyCameraToastMethod(closeCameraToastMethod);
             }
-            else
+            catch (Exception ex)
             {
-                throw new FileNotFoundException($"写入后文件不存在：{outputDllPath}");
+                Console.WriteLine($"  ⚠ CloseCameraToast: {ex.Message}");
             }
-        }
-        catch (UnauthorizedAccessException ex)
-        {
-            Console.WriteLine($"❌ 操作失败 - 文件被占用：{ex.Message}");
-            Console.WriteLine("可能的解决方案：");
-            Console.WriteLine("  1. 确保小米电脑管家已完全关闭（检查任务管理器）");
-            Console.WriteLine("  2. 重启计算机，使用\"直接替换\"选项");
-            Console.WriteLine("  3. 禁用杀毒软件并重试");
+
+            // 屏蔽合并确认对话框
+            try
+            {
+                var onShowCombinedPromptMethod = FindMethod(synergyType, "MiSmartShareClrWrapper.ICameraCooperationWrapperUI.OnShowCombinedPrompt");
+                Console.WriteLine($"  [3] 屏蔽 OnShowCombinedPrompt");
+                ModifyCameraToastMethod(onShowCombinedPromptMethod);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"  ⚠ OnShowCombinedPrompt: {ex.Message}");
+            }
+
+            // 屏蔽关闭合并确认对话框
+            try
+            {
+                var onCloseCombinedPromptMethod = FindMethod(synergyType, "MiSmartShareClrWrapper.ICameraCooperationWrapperUI.OnCloseCombinedPrompt");
+                Console.WriteLine($"  [4] 屏蔽 OnCloseCombinedPrompt");
+                ModifyCameraToastMethod(onCloseCombinedPromptMethod);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"  ⚠ OnCloseCombinedPrompt: {ex.Message}");
+            }
+
+            Console.WriteLine("✓ 补丁应用完成\n");
+
+            // 步骤 4：生成修改后的 DLL
+            Console.WriteLine("=== 步骤 3：生成修改后的 DLL ===");
+            string outputPath = Path.Combine(currentDir, "PcControlCenter_PATCHED.dll");
+            int outputIndex = 1;
+            while (File.Exists(outputPath))
+            {
+                outputPath = Path.Combine(currentDir, $"PcControlCenter_PATCHED_{outputIndex}.dll");
+                outputIndex++;
+            }
+
+            module.Write(outputPath);
+            var outputInfo = new FileInfo(outputPath);
+            Console.WriteLine($"✓ 修改后的 DLL 已生成：{Path.GetFileName(outputPath)}");
+            Console.WriteLine($"  文件大小：{outputInfo.Length / 1024} KB\n");
+
+            // 步骤 5：提示用户
+            Console.WriteLine("╔════════════════════════════════════════════════════╗");
+            Console.WriteLine("║                   ✓ 修补完成！                    ║");
+            Console.WriteLine("╚════════════════════════════════════════════════════╝\n");
+
+            Console.WriteLine("📁 生成的文件（都在当前目录）：");
+            Console.WriteLine($"  • {Path.GetFileName(backupPath)} - 原始 DLL 备份");
+            Console.WriteLine($"  • {Path.GetFileName(outputPath)} - 修改后的 DLL\n");
+
+            Console.WriteLine("🔧 后续步骤：");
+            Console.WriteLine("  1. 关闭小米电脑管家应用");
+            Console.WriteLine("  2. 停止小米相关后台服务（可选，但推荐）");
+            Console.WriteLine("  3. 将修改后的 DLL 手动复制到：");
+            Console.WriteLine("     C:\\Program Files\\MI\\XiaomiPCManager\\5.8.0.14\\PcControlCenter.dll");
+            Console.WriteLine("     （覆盖原文件，系统会提示需要管理员权限）");
+            Console.WriteLine("  4. 重启小米电脑管家\n");
+
+            Console.WriteLine("⚠ 恢复方法：");
+            Console.WriteLine($"  如需恢复原版 DLL，将 {Path.GetFileName(backupPath)} 复制回原位置即可\n");
+
+            Console.WriteLine("按任意键退出...");
+            Console.ReadLine();
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"❌ 操作失败：{ex.Message}");
+            Console.WriteLine($"\n❌ 操作失败：{ex.Message}");
             Console.WriteLine($"异常类型：{ex.GetType().Name}");
+            Console.WriteLine("\n按任意键退出...");
+            Console.ReadLine();
         }
-
-        // 按任意键退出
-        Console.WriteLine("按任意键退出...");
-        Console.ReadLine();
     }
 
     /// <summary>
@@ -251,9 +213,24 @@ internal partial class Program
     // 查找目标方法
     private static MethodDef FindMethod(TypeDef type, string methodName)
     {
+        // 先尝试完全匹配
         var targetMethod = type.Methods.FirstOrDefault(m => m.Name == methodName);
+        
+        // 如果没找到，尝试模糊匹配（处理接口实现方法名，如 "ICameraCooperationWrapperUI.OnShowCombinedPrompt"）
+        if (targetMethod == null && methodName.Contains("."))
+        {
+            targetMethod = type.Methods.FirstOrDefault(m => m.Name.EndsWith("." + methodName) || m.Name == methodName);
+        }
+        
+        // 如果还是没找到，尝试只匹配方法名结尾部分
         if (targetMethod == null)
-            throw new ArgumentException($"未找到方法：{methodName}");
+        {
+            string lastPart = methodName.Split('.').Last();
+            targetMethod = type.Methods.FirstOrDefault(m => m.Name.EndsWith("." + lastPart) || m.Name == lastPart);
+        }
+        
+        if (targetMethod == null)
+            throw new ArgumentException($"未找到方法：{methodName}（已尝试全名、接口名、简名）");
 
         if (targetMethod.IsAbstract)
             throw new NotSupportedException("无法修改抽象方法");
