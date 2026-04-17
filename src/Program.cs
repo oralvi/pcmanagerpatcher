@@ -125,7 +125,40 @@ internal partial class Program
 
             // 保存修改后的DLL（使用重试机制应对文件占用）
             Console.WriteLine($"\n开始写入 DLL 到：{outputDllPath}");
-            WriteModuleWithRetry(module, outputDllPath, maxRetries: 5);
+            try
+            {
+                WriteModuleWithRetry(module, outputDllPath, maxRetries: 5);
+            }
+            catch (IOException ex) when (ex.Message.Contains("用户映射") || ex.Message.Contains("memory-mapped"))
+            {
+                // 如果是内存映射的错误，提示用户重启
+                Console.WriteLine($"\n❌ 写入失败 - 文件被系统内存映射");
+                Console.WriteLine("这通常表示：");
+                Console.WriteLine("  • Windows 内核或驱动程序持有文件");
+                Console.WriteLine("  • 虚拟内存映射");
+                Console.WriteLine("\n💡 解决方案：");
+                Console.WriteLine("  1. 关闭本程序");
+                Console.WriteLine("  2. 重启电脑");
+                Console.WriteLine("  3. 重启后立即运行本程序（在任务管理器加载之前）");
+                Console.WriteLine("\n或者使用备用方式：");
+                Console.WriteLine($"  • 把补丁 DLL 保存到其他目录");
+                Console.WriteLine($"  • 手动用备份文件替换");
+                
+                // 尝试备用：保存到当前目录
+                string altPath = $"PcControlCenter_PATCHED_{DateTime.Now:yyyyMMdd_HHmmss}.dll";
+                try
+                {
+                    Console.WriteLine($"\n尝试保存到备用位置：{altPath}");
+                    WriteModuleWithRetry(module, altPath, maxRetries: 3);
+                    Console.WriteLine($"✓ 补丁 DLL 已保存到：{Environment.CurrentDirectory}\\{altPath}");
+                    Console.WriteLine($"  您可以手动将此文件复制到：{dllPath}");
+                }
+                catch
+                {
+                    Console.WriteLine($"✗ 备用保存也失败了，请重启后重试");
+                }
+                throw;
+            }
 
             // 验证文件是否真的被修改
             if (File.Exists(outputDllPath))
