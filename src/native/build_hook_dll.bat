@@ -1,7 +1,23 @@
 @echo off
 setlocal enabledelayedexpansion
 
-call "C:\Program Files\Microsoft Visual Studio\18\Community\VC\Auxiliary\Build\vcvars64.bat"
+set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
+if not exist "%VSWHERE%" (
+    echo Build FAILED: vswhere.exe not found
+    exit /b 1
+)
+
+for /f "usebackq tokens=*" %%I in (`"%VSWHERE%" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "VSINSTALLDIR=%%I"
+if "%VSINSTALLDIR%"=="" (
+    echo Build FAILED: Visual Studio with C++ tools not found
+    exit /b 1
+)
+
+call "%VSINSTALLDIR%\VC\Auxiliary\Build\vcvars64.bat"
+if errorlevel 1 (
+    echo Build FAILED: vcvars64.bat initialization failed
+    exit /b 1
+)
 
 set SOURCE_DIR=%~dp0
 set OUTPUT_PATH=%~1
