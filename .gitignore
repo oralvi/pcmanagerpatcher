@@ -62,5 +62,10 @@ samples/**/*.compatbak
 anal/
 artifacts/
 
+## Vendored native dependencies
+!src/thirdparty/detours/lib/
+!src/thirdparty/detours/lib/detours.lib
+!src/thirdparty/detours/lib/detours.obj
+
 ## Archived oddities
 *.md1
