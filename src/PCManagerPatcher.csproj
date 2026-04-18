@@ -2,20 +2,51 @@
 
     <PropertyGroup>
         <OutputType>Exe</OutputType>
-        <TargetFramework>net8.0</TargetFramework>
+        <TargetFramework>net8.0-windows</TargetFramework>
         <RuntimeIdentifier>win-x64</RuntimeIdentifier>
         <PublishSingleFile>true</PublishSingleFile>
-        <PublishTrimmed>true</PublishTrimmed>
+        <PublishTrimmed>false</PublishTrimmed>
         <PublishReadyToRun>true</PublishReadyToRun>
-        <TrimMode>full</TrimMode>
         <EnableTrimAnalyzer>false</EnableTrimAnalyzer>
         <InvariantGlobalization>true</InvariantGlobalization>
+        <!-- BuildMsimg32Safe disabled: Using IAT Hook injection instead of DLL sideloading -->
+        <BuildMsimg32Safe>false</BuildMsimg32Safe>
+        <HookDllPayloadPath>$(MSBuildProjectDirectory)\obj\hook-payload\hook.dll</HookDllPayloadPath>
+        <HookDllSourcePath>$(MSBuildProjectDirectory)\obj\hook-payload\HookDllPayload.g.cs</HookDllSourcePath>
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
     </PropertyGroup>
 
     <ItemGroup>
       <PackageReference Include="dnlib" Version="4.4.0" />
+      <PackageReference Include="System.ServiceProcess.ServiceController" Version="9.0.4" />
     </ItemGroup>
+
+    <ItemGroup>
+      <Compile Include="$(HookDllSourcePath)" AutoGen="true" Visible="false" />
+    </ItemGroup>
+
+    <Target Name="BuildHookDllPayload" BeforeTargets="BeforeCompile">
+        <MakeDir Directories="$(MSBuildProjectDirectory)\obj\hook-payload" />
+        <Exec Command="&quot;$(MSBuildProjectDirectory)\native\build_hook_dll.bat&quot; &quot;$(HookDllPayloadPath)&quot;" />
+        <Exec Command="pwsh -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\native\generate_hook_payload.ps1&quot; -InputPath &quot;$(HookDllPayloadPath)&quot; -OutputPath &quot;$(HookDllSourcePath)&quot;" />
+    </Target>
+
+    <Target Name="BuildMsimg32SafeDll" AfterTargets="Build" Condition="'$(BuildMsimg32Safe)' == 'true'">
+        <Message Text="[msimg32-safe] building hook DLL to $(Msimg32SafeOutput)" Importance="High" />
+          <Exec Command="pwsh -NoProfile -ExecutionPolicy Bypass -File &quot;$(Msimg32SafeBuildScript)&quot; -OutputPath &quot;$(Msimg32SafeOutput)&quot;"
+              IgnoreExitCode="true"
+              ConsoleToMSBuild="true"
+              StandardOutputImportance="High"
+              StandardErrorImportance="High">
+            <Output TaskParameter="ExitCode" PropertyName="Msimg32SafeExitCode" />
+        </Exec>
+
+        <Warning Condition="'$(Msimg32SafeExitCode)' != '0'"
+                 Text="[msimg32-safe] build failed (exit $(Msimg32SafeExitCode)). install-hook-assist may need explicit --hook-dll-path fallback." />
+        <Message Condition="Exists('$(Msimg32SafeOutput)')"
+                 Text="[msimg32-safe] output ready: $(Msimg32SafeOutput)"
+                 Importance="High" />
+    </Target>
 
 </Project>

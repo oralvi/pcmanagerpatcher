@@ -1,61 +1,66 @@
-## Build results
+## Build outputs
 [Dd]ebug/
 [Dd]ebugPublic/
 [Rr]elease/
 [Rr]eleases/
+[Bb]in/
+[Oo]bj/
 x64/
 x86/
 [Ww][Ii][Nn]32/
 [Aa][Rr][Mm]/
 [Aa][Rr][Mm]64/
 bld/
-[Bb]in/
-[Oo]bj/
-[Ll]og/
-[Ll]ogs/
-*.md1
-## Visual Studio cache
+*publish*
+src/publish_*/
+
+## IDE and editor files
 .vs/
 .vscode/
+.idea/
 *.suo
 *.user
 *.userosscache
 *.sln.docstates
-
-## IDEs
-.idea/
 *.swp
 *.swo
 
-## OS
+## OS files
 .DS_Store
 Thumbs.db
-*.bak
-*.tmp
-*.dll
-## NuGet
+
+## Packages
 *.nupkg
 *.snupkg
 packages/
 .nuget/
 
-## Test results
+## Logs and temp files
+*.log
+*.tmp
+tmp/
+temp/
+analysis/
 TestResults/
 *.trx
 *.coverage
+*debug/
 
-## Temporary files
-tmp/
-temp/
-*.log
-Analyze.cs
-DLL_ANALYSIS_*.md
-dotnet-install.ps1
-
-## Backup files
+## Generated binaries and backups
+*.dll
+*.exp
+*.lib
+*.obj
+*.bak
 *.backup
 PcControlCenter.dll
+samples/**/*.dll
+samples/**/*.bak
+samples/**/*.compatbak
 
-## GitHub build output
+## Analysis inputs and runtime artifacts
+anal/
 artifacts/
-release/
+
+## Archived oddities
+*.md1

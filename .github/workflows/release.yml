@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - 'v*.*.*'
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -21,10 +22,10 @@ jobs:
         dotnet-version: '8.0.x'
     
     - name: Restore dependencies
-      run: dotnet restore src
+      run: dotnet restore src/PCManagerPatcher.csproj
     
     - name: Build and publish
-      run: dotnet publish src -c Release -r win-x64 --sc -p:PublishSingleFile=true -o artifacts
+      run: dotnet publish src/PCManagerPatcher.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=false -o artifacts
     
     - name: Get version from tag
       id: get_version
