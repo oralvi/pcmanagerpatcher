@@ -1,22 +1,29 @@
 @echo off
 setlocal enabledelayedexpansion
 
-set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
-if not exist "%VSWHERE%" (
-    echo Build FAILED: vswhere.exe not found
-    exit /b 1
-)
-
-for /f "usebackq tokens=*" %%I in (`"%VSWHERE%" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "VSINSTALLDIR=%%I"
-if "%VSINSTALLDIR%"=="" (
-    echo Build FAILED: Visual Studio with C++ tools not found
-    exit /b 1
-)
-
-call "%VSINSTALLDIR%\VC\Auxiliary\Build\vcvars64.bat"
+where cl.exe >nul 2>nul
 if errorlevel 1 (
-    echo Build FAILED: vcvars64.bat initialization failed
-    exit /b 1
+    set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
+    if not exist "%VSWHERE%" (
+        echo Build FAILED: vswhere.exe not found
+        exit /b 1
+    )
+
+    for /f "usebackq tokens=*" %%I in (`"%VSWHERE%" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "VSINSTALLDIR=%%I"
+    if "%VSINSTALLDIR%"=="" (
+        echo Build FAILED: Visual Studio with C++ tools not found
+        exit /b 1
+    )
+
+    call "%VSINSTALLDIR%\VC\Auxiliary\Build\vcvars64.bat"
+    if errorlevel 1 (
+        echo Build FAILED: vcvars64.bat initialization failed
+        exit /b 1
+    )
+
+    if not "%VCToolsInstallDir%"=="" (
+        set "PATH=%VCToolsInstallDir%bin\Hostx64\x64;%PATH%"
+    )
 )
 
 set SOURCE_DIR=%~dp0
